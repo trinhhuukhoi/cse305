@@ -1,0 +1,136 @@
+public static int verify(Cookie cookie) throws NamingException{
+ if (cookie == null) {
+	 	// 0 : no cookie
+        return 0;
+    } else {
+         try {
+        	 String key = Configuration.getJwtKey();
+        	 Jwts.parser().setSigningKey(key).parseClaimsJws(cookie.getValue());
+        	 // 1 : valid cookie
+        	 return 1;
+
+        	} catch (SignatureException e) {
+        		// 2 : invalid cookie
+        		 return 2;  
+        	}  
+    }
+}
+} 
+
+
+package com.tanbinhtech.springpublisher;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+import javax.naming.NamingException;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.NewCookie;
+import javax.ws.rs.core.Response;
+
+import com.tanbinhtech.springpublisher.model.Credential;
+import com.tanbinhtech.springpublisher.model.User;
+
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+
+/*
+ * Using jsonwebtoken library
+ */
+@Path("/publisher/authentication")
+public class PublisherAuthenticationResource {
+	
+	 	@POST
+	    @Consumes(MediaType.APPLICATION_JSON) 
+	    public Response authenticateUser(Credential credentials) {
+        	String login = credentials.getUsername();
+        	String password = credentials.getPassword();
+        	  try {
+	           User authUser = authenticate(login, password);
+	          // Issue a token for the user
+	        	String authToken = issueToken (authUser);
+	        	// To attach the cookie to all requests the domain and path should be: domain = ""; path = "/"
+	        	// So the cookie creation will look as follows:
+	         	NewCookie cookie = 
+	         			new NewCookie("springpublisher", authToken, "/", "", "auth_token", NewCookie.DEFAULT_MAX_AGE, false);
+	         	
+	         	//HttpOnly flag in cookies sent from the server have an important behavior on the client side 
+	         	//(browser based applications): Javascript applications cannot access the cookies marked with HttpOnly flag.
+	         	// READ: https://www.owasp.org/index.php/HttpOnly
+	         	
+	            //return Response.ok("OK").header("Set-Cookie", cookie.toString() + ";HttpOnly").build();
+	         	return Response.ok("OK").cookie(cookie).build();
+	        	
+	       } catch (Exception e) {
+	            return Response.status(Response.Status.UNAUTHORIZED).build();
+	        }      
+	        	  
+	    }
+
+    private User authenticate(String username, String password) throws SQLException, NamingException  {
+        // Authenticate against the database
+    	Connection db = null;
+    	User authUser = null;
+	
+		try {
+			db = Configuration.getConnection();
+			
+			PreparedStatement st = db.prepareStatement("SELECT reguser_id, role, publisher from reguser where login=? and password=?");
+			st.setString(1, username);
+			st.setString(2, password);
+			ResultSet rs = st.executeQuery();
+			
+			if (rs.next()){
+					authUser = new User();
+					authUser.setId(rs.getInt("reguser_id"));
+					authUser.setRole(rs.getInt("role"));
+					authUser.setPublisher(rs.getInt("publisher"));
+					return authUser;
+			} else {
+				throw new SecurityException("101");
+			}
+		}
+		finally {
+ 			try {
+ 				if(db != null){
+ 					db.close();	
+ 				} 
+ 			} catch (SQLException e) {
+ 				// TODO Auto-generated catch block
+ 				e.printStackTrace();
+ 			}
+ 		}
+		
+        	  
+    }
+		
+
+    private String issueToken(User authUser) throws NamingException {
+    	 // Issue a JWT token	
+    	 // Signing key  
+    	 String key = Configuration.getJwtKey();
+
+         // Using jjwt library
+         // READ: https://github.com/jwtk/jjwt/blob/master/src/main/java/io/jsonwebtoken/JwtBuilder.java
+         String authToken = Jwts.builder()
+        	.claim("user", authUser.getId())
+         	.claim("publisher", authUser.getPublisher())
+        	.claim("role", authUser.getRole())
+        	.signWith(SignatureAlgorithm.HS512, key)
+        	.compact();
+            // Return the token on the response
+		return authToken;
+       
+    }
+}
+
+		<!-- https://mvnrepository.com/artifact/io.jsonwebtoken/jjwt -->
+		<dependency>
+			<groupId>io.jsonwebtoken</groupId>
+			<artifactId>jjwt</artifactId>
+			<version>0.9.1</version>
+		</dependency>
